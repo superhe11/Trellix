@@ -1,0 +1,51 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.HttpError = void 0;
+exports.assert = assert;
+const STATUS_CODE_MAP = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+    422: "UNPROCESSABLE_ENTITY",
+    429: "TOO_MANY_REQUESTS",
+    500: "INTERNAL_ERROR",
+};
+class HttpError extends Error {
+    status;
+    code;
+    details;
+    constructor(status, message, optionsOrDetails) {
+        super(message);
+        this.name = "HttpError";
+        this.status = status;
+        if (isHttpErrorOptions(optionsOrDetails)) {
+            this.code = optionsOrDetails.code ?? defaultCode(status);
+            this.details = optionsOrDetails.details;
+        }
+        else {
+            this.code = defaultCode(status);
+            if (optionsOrDetails !== undefined) {
+                this.details = optionsOrDetails;
+            }
+        }
+    }
+}
+exports.HttpError = HttpError;
+function assert(condition, status, message, options) {
+    if (!condition) {
+        throw new HttpError(status, message, options);
+    }
+}
+function defaultCode(status) {
+    return STATUS_CODE_MAP[status] ?? `ERROR_${status}`;
+}
+function isHttpErrorOptions(value) {
+    if (!value || typeof value !== "object") {
+        return false;
+    }
+    const candidate = value;
+    return "code" in candidate || "details" in candidate;
+}
+//# sourceMappingURL=http-error.js.map

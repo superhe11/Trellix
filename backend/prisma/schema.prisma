@@ -1,0 +1,153 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  LEAD
+  EMPLOYEE
+}
+
+enum BoardRole {
+  OWNER
+  MANAGER
+  COLLABORATOR
+  VIEWER
+}
+
+enum CardStatus {
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+model User {
+  id            String          @id @default(uuid())
+  email         String          @unique
+  password      String
+  fullName      String
+  role          UserRole        @default(EMPLOYEE)
+  managerId     String?
+  manager       User?           @relation("UserManager", fields: [managerId], references: [id])
+  subordinates  User[]          @relation("UserManager")
+  boardsOwned   Board[]         @relation("BoardOwner")
+  memberships   BoardMember[]
+  cardsCreated  Card[]          @relation("CardsCreated")
+  assignments   CardAssignment[]
+  refreshTokens RefreshToken[]
+  activityLog   ActivityLog[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+model Board {
+  id        String         @id @default(uuid())
+  title     String
+  description String?
+  ownerId   String
+  owner     User           @relation("BoardOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members   BoardMember[]
+  lists     List[]
+  activity  ActivityLog[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
+
+model BoardMember {
+  id            String    @id @default(uuid())
+  boardId       String
+  userId        String
+  role          BoardRole @default(COLLABORATOR)
+  canManageCards Boolean  @default(false)
+  board         Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([boardId, userId])
+  @@index([userId])
+}
+
+model List {
+  id        String   @id @default(uuid())
+  boardId   String
+  title     String
+  position  Int
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards     Card[]
+  activity  ActivityLog[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([boardId, position])
+}
+
+model Card {
+  id           String           @id @default(uuid())
+  listId       String
+  title        String
+  description  String?
+  position     Int
+  status       CardStatus       @default(TODO)
+  dueDate      DateTime?
+  archived     Boolean          @default(false)
+  createdById  String
+  createdBy    User             @relation("CardsCreated", fields: [createdById], references: [id])
+  list         List             @relation(fields: [listId], references: [id], onDelete: Cascade)
+  assignments  CardAssignment[]
+  activity     ActivityLog[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([listId, position])
+}
+
+model CardAssignment {
+  id        String   @id @default(uuid())
+  cardId    String
+  userId    String
+  card      Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([cardId, userId])
+  @@index([userId])
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  action    String
+  metadata  Json?
+  userId    String?
+  boardId   String?
+  listId    String?
+  cardId    String?
+  createdAt DateTime @default(now())
+
+  user  User?  @relation(fields: [userId], references: [id])
+  board Board? @relation(fields: [boardId], references: [id])
+  list  List?  @relation(fields: [listId], references: [id])
+  card  Card?  @relation(fields: [cardId], references: [id])
+}
+
+model RefreshToken {
+  id            String         @id @default(uuid())
+  token         String         @unique
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt     DateTime
+  createdAt     DateTime       @default(now())
+  revoked       Boolean        @default(false)
+  replacedById  String?
+  replacedBy    RefreshToken?  @relation("RefreshTokenReplacement", fields: [replacedById], references: [id])
+  replacements  RefreshToken[] @relation("RefreshTokenReplacement")
+
+  @@index([userId])
+  @@index([expiresAt])
+}
