@@ -27,3 +27,8 @@ export const cardIdParamsSchema = z.object({
 export const listIdParamsSchema = z.object({
   listId: z.string().uuid(),
 });
+
+export const searchCardsQuerySchema = z.object({
+  q: z.string().min(2),
+  limit: z.coerce.number().int().positive().max(50).optional(),
+});

@@ -136,7 +136,7 @@ export function BoardsPage() {
 }
 
 function BoardTile({ board }: { board: Board }) {
-  const memberCount = board.members.length;
+  const memberCount = typeof board.accessCount === "number" ? board.accessCount : board.members.length;
   const listCount = board.lists.length;
 
   return (

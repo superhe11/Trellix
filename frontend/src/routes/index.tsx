@@ -7,6 +7,7 @@ import { PublicRoute } from "@/components/routing/PublicRoute";
 import { BoardsPage } from "@/features/boards/pages/boards-page";
 import { BoardPage } from "@/features/boards/pages/board-page";
 import { UsersPage } from "@/features/admin/pages/users-page";
+import { ProjectsPage } from "@/features/admin/pages/projects-page";
 import { LoginPage } from "@/features/auth/pages/login-page";
 import { RegisterPage } from "@/features/auth/pages/register-page";
 import { ErrorPage } from "@/routes/error-page";
@@ -31,6 +32,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute roles={["ADMIN"]}>
             <UsersPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "/admin/projects",
+        element: (
+          <ProtectedRoute roles={["ADMIN"]}>
+            <ProjectsPage />
           </ProtectedRoute>
         ),
       },

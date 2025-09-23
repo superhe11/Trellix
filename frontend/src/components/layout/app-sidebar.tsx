@@ -1,5 +1,5 @@
 ﻿import { NavLink } from "react-router-dom";
-import { LayoutDashboard, ShieldCheck, LogOut, Sparkles } from "lucide-react";
+import { LayoutDashboard, ShieldCheck, LogOut, Sparkles, Briefcase } from "lucide-react";
 import type { UserRole } from "@/types";
 import type React from "react";
 import clsx from "clsx";
@@ -19,6 +19,12 @@ const navigation: NavItem[] = [
     label: "Доски",
     to: "/boards",
     icon: LayoutDashboard,
+  },
+  {
+    label: "Проекты",
+    to: "/admin/projects",
+    icon: Briefcase,
+    roles: ["ADMIN"],
   },
   {
     label: "Пользователи",

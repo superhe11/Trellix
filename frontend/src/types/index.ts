@@ -63,6 +63,7 @@ export interface Board {
   lists: List[];
   createdAt?: string;
   updatedAt?: string;
+  accessCount?: number;
 }
 
 export interface ApiResponse<T> {

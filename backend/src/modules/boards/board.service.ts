@@ -85,10 +85,23 @@ const boardDetailInclude = {
 
 export async function listBoardsForUser(user: Express.UserPayload) {
   if (user.role === UserRole.ADMIN) {
-    return prisma.board.findMany({
+    const boards = await prisma.board.findMany({
       orderBy: { updatedAt: "desc" },
       include: boardSummaryInclude,
     });
+
+    const boardsWithCounts = await Promise.all(
+      boards.map(async (board) => {
+        const memberUserIds = board.members.map((m) => m.user.id);
+        const nonAdminMembersCount = board.members.filter((m) => m.user.role !== UserRole.ADMIN).length;
+        const subordinateEmployeesCount = await prisma.user.count({
+          where: { managerId: board.ownerId, role: UserRole.EMPLOYEE, id: { notIn: memberUserIds } },
+        });
+        const accessCount = nonAdminMembersCount + subordinateEmployeesCount;
+        return { ...board, accessCount } as typeof board & { accessCount: number };
+      })
+    );
+    return boardsWithCounts;
   }
 
   const visibilityFilters: Prisma.BoardWhereInput[] = [
@@ -97,24 +110,52 @@ export async function listBoardsForUser(user: Express.UserPayload) {
   ];
 
   if (user.role === UserRole.EMPLOYEE) {
-    visibilityFilters.push({
-      owner: {
-        is: {
-          subordinates: {
-            some: { id: user.userId },
+    visibilityFilters.push(
+      {
+        owner: {
+          is: {
+            subordinates: {
+              some: { id: user.userId },
+            },
           },
         },
       },
-    });
+      {
+        members: {
+          some: {
+            user: {
+              role: UserRole.LEAD,
+              subordinates: { some: { id: user.userId } },
+            },
+          },
+        },
+      }
+    );
   }
 
-  return prisma.board.findMany({
+  const boards = await prisma.board.findMany({
     where: {
       OR: visibilityFilters,
     },
     orderBy: { updatedAt: "desc" },
     include: boardSummaryInclude,
   });
+
+  const boardsWithCounts = await Promise.all(
+    boards.map(async (board) => {
+      const memberUserIds = board.members.map((m) => m.user.id);
+      const nonAdminMembersCount = board.members.filter((m) => m.user.role !== UserRole.ADMIN).length;
+      const leadManagerIds = [board.ownerId, ...board.members.filter((m) => m.user.role === UserRole.LEAD).map((m) => m.user.id)];
+      const subordinateEmployees = await prisma.user.findMany({
+        where: { managerId: { in: leadManagerIds }, role: UserRole.EMPLOYEE, id: { notIn: memberUserIds } },
+        distinct: ["id"],
+        select: { id: true },
+      });
+      const accessCount = nonAdminMembersCount + subordinateEmployees.length;
+      return { ...board, accessCount } as typeof board & { accessCount: number };
+    })
+  );
+  return boardsWithCounts;
 }
 
 export async function getBoardById(user: Express.UserPayload, boardId: string) {
@@ -134,7 +175,12 @@ export async function getBoardById(user: Express.UserPayload, boardId: string) {
       where: { id: user.userId },
       select: { managerId: true },
     });
-    isManagedEmployee = employee?.managerId === board.ownerId;
+    const managerId = employee?.managerId ?? null;
+    if (managerId) {
+      const managerIsOwner = managerId === board.ownerId;
+      const managerIsMember = board.members.some((member) => member.user.id === managerId && member.user.role === UserRole.LEAD);
+      isManagedEmployee = managerIsOwner || managerIsMember;
+    }
   }
 
   if (user.role !== UserRole.ADMIN) {
@@ -325,6 +371,9 @@ async function assertBoardManageAccess(user: Express.UserPayload, boardId: strin
     throw new HttpError(403, "Нет доступа к доске");
   }
 }
+
+
+
 
 
 

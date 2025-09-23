@@ -1,7 +1,8 @@
 ﻿import { Request, Response } from "express";
 import { asyncHandler } from "../../middleware/async-handler";
 import { HttpError } from "../../utils/http-error";
-import { createCard, deleteCard, getCard, updateCard } from "./card.service";
+import { createCard, deleteCard, getCard, searchCards, updateCard } from "./card.service";
+import { searchCardsQuerySchema } from "./card.validation";
 
 export const createCardHandler = asyncHandler(async (req: Request, res: Response) => {
   if (!req.user) {
@@ -33,4 +34,13 @@ export const getCardHandler = asyncHandler(async (req: Request, res: Response) =
   }
   const card = await getCard(req.user, req.params.id);
   res.json({ card });
+});
+
+export const searchCardsHandler = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) {
+    throw new HttpError(401, "Требуется авторизация");
+  }
+  const { q, limit } = searchCardsQuerySchema.parse(req.query);
+  const results = await searchCards(req.user, q, limit ?? 10);
+  res.json({ cards: results });
 });

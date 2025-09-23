@@ -69,7 +69,7 @@ export async function createCard(
     throw new HttpError(404, "Список не найден");
   }
 
-  ensureCardCreationRights(user, list);
+  await ensureCardCreationRights(user, list);
 
   const assigneeIds = Array.from(new Set(payload.assigneeIds ?? []));
   await ensureAssigneesAllowed(user, list.boardId, assigneeIds);
@@ -300,7 +300,64 @@ export async function getCard(user: Express.UserPayload, cardId: string) {
   return card;
 }
 
-function ensureCardCreationRights(
+export async function searchCards(user: Express.UserPayload, query: string, limit: number) {
+  // Find visible boards for the user
+  const visibleBoardIds = await (async () => {
+    if (user.role === UserRole.ADMIN) {
+      const boards = await prisma.board.findMany({ select: { id: true } });
+      return boards.map((b) => b.id);
+    }
+    const owned = await prisma.board.findMany({ where: { ownerId: user.userId }, select: { id: true } });
+    const memberBoards = await prisma.boardMember.findMany({ where: { userId: user.userId }, select: { boardId: true } });
+    const ids = new Set<string>([...owned.map((b) => b.id), ...memberBoards.map((m) => m.boardId)]);
+    if (user.role === UserRole.EMPLOYEE) {
+      const employee = await prisma.user.findUnique({ where: { id: user.userId }, select: { managerId: true } });
+      if (employee?.managerId) {
+        const managedBoards = await prisma.board.findMany({ where: { ownerId: employee.managerId }, select: { id: true } });
+        const leadMemberBoards = await prisma.boardMember.findMany({
+          where: { userId: employee.managerId },
+          select: { boardId: true },
+        });
+        managedBoards.forEach((b) => ids.add(b.id));
+        leadMemberBoards.forEach((m) => ids.add(m.boardId));
+      }
+    }
+    return Array.from(ids);
+  })();
+
+  if (!visibleBoardIds.length) {
+    return [] as Array<{ id: string; title: string; boardId: string; listId: string; listTitle: string; boardTitle: string }>;
+  }
+
+  const cards = await prisma.card.findMany({
+    where: {
+      list: { boardId: { in: visibleBoardIds } },
+      OR: [
+        { title: { contains: query, mode: "insensitive" } },
+        { description: { contains: query, mode: "insensitive" } },
+      ],
+    },
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      title: true,
+      listId: true,
+      list: { select: { id: true, title: true, boardId: true, board: { select: { id: true, title: true } } } },
+    },
+  });
+
+  return cards.map((c) => ({
+    id: c.id,
+    title: c.title,
+    boardId: c.list.boardId,
+    listId: c.list.id,
+    listTitle: c.list.title,
+    boardTitle: c.list.board.title,
+  }));
+}
+
+async function ensureCardCreationRights(
   user: Express.UserPayload,
   list: {
     boardId: string;
@@ -317,16 +374,36 @@ function ensureCardCreationRights(
   const isOwner = list.board.ownerId === user.userId;
   const membership = list.board.members[0];
 
-  if (!isOwner && !membership) {
-    throw new HttpError(403, "Нет доступа к этой доске");
+  if (isOwner) {
+    return;
+  }
+
+  if (!membership) {
+    if (user.role === UserRole.EMPLOYEE) {
+      const employee = await prisma.user.findUnique({
+        where: { id: user.userId },
+        select: { managerId: true },
+      });
+      // allow if employee's manager owns the board
+      if (employee?.managerId === list.board.ownerId) {
+        return;
+      }
+      // also allow if employee's manager is an explicit member of the board
+      if (employee?.managerId) {
+        const managerIsBoardMember = await prisma.boardMember.findFirst({
+          where: { boardId: list.boardId, userId: employee.managerId },
+          select: { id: true },
+        });
+        if (managerIsBoardMember) {
+          return;
+        }
+      }
+    }
+    throw new HttpError(403, "Нет доступа к доске");
   }
 
   if (user.role === UserRole.LEAD) {
     return;
-  }
-
-  if (user.role === UserRole.EMPLOYEE && !membership) {
-    throw new HttpError(403, "Сотрудник должен быть участником доски");
   }
 }
 
@@ -349,10 +426,7 @@ function ensureCardManageRights(
   const membership = board.members.find((member) => member.userId === user.userId);
   const isOwner = board.ownerId === user.userId;
 
-  if (!isOwner && !membership) {
-    throw new HttpError(403, "Нет доступа к этой доске");
-  }
-
+  // Full access if board owner or board manager/owner member
   if (isOwner || membership?.role === BoardRole.OWNER || membership?.role === BoardRole.MANAGER) {
     return;
   }
@@ -361,14 +435,19 @@ function ensureCardManageRights(
   const isAssigned = card.assignments.some((assignment) => assignment.userId === user.userId);
   const managesAssignee = card.assignments.some((assignment) => assignment.user.managerId === user.userId);
 
+  // Leads can manage cards they created, assigned to, or for their subordinates
   if (user.role === UserRole.LEAD && (isCreator || managesAssignee || isAssigned)) {
     return;
   }
 
-  if (user.role === UserRole.EMPLOYEE) {
-    if (isCreator || isAssigned) {
-      return;
-    }
+  // Employees can manage their own cards or those where they are assignees
+  if (user.role === UserRole.EMPLOYEE && (isCreator || isAssigned)) {
+    return;
+  }
+
+  // If the user is neither owner nor member with privileges and none of the above individual conditions matched
+  if (!isOwner && !membership) {
+    throw new HttpError(403, "Нет доступа к этой доске");
   }
 
   throw new HttpError(403, isDelete ? "Нет доступа к удалению карточки" : "Нет доступа к редактированию карточки");
@@ -425,3 +504,4 @@ async function ensureAssigneesAllowed(user: Express.UserPayload, boardId: string
     throw new HttpError(400, "Все исполнители должны быть участниками доски");
   }
 }
+

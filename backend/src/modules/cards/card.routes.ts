@@ -12,6 +12,7 @@ import {
   deleteCardHandler,
   getCardHandler,
   updateCardHandler,
+  searchCardsHandler,
 } from "./card.controller";
 
 export const cardRouter = Router();
@@ -25,6 +26,8 @@ cardRouter.post(
 );
 
 cardRouter.get("/cards/:id", validate({ params: cardIdParamsSchema }), getCardHandler);
+
+cardRouter.get("/cards", searchCardsHandler);
 
 cardRouter.patch(
   "/cards/:id",
