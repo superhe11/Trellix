@@ -16,6 +16,7 @@ interface DroppableListProps {
   currentUserRole?: string;
   canManageAllCards: boolean;
   onEditCard: (card: CardType) => void;
+  onToggleFavoriteTag?: (cardId: string, tagId: string, isFavorite: boolean) => void;
 }
 
 export const DroppableList = memo(function DroppableList({
@@ -28,6 +29,7 @@ export const DroppableList = memo(function DroppableList({
   currentUserRole,
   canManageAllCards,
   onEditCard,
+  onToggleFavoriteTag,
 }: DroppableListProps) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: list.id,
@@ -99,6 +101,8 @@ export const DroppableList = memo(function DroppableList({
                 currentUserRole={currentUserRole}
                 canManageAllCards={canManageAllCards}
                 onEdit={onEditCard}
+                listTitle={list.title}
+                onToggleFavorite={onToggleFavoriteTag}
               />
             ))}
           </div>

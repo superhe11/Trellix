@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate";
 import { validate } from "../../middleware/validate";
 import {
@@ -6,6 +6,10 @@ import {
   createCardSchema,
   listIdParamsSchema,
   updateCardSchema,
+  attachTagSchema,
+  reorderCardTagsSchema,
+  toggleFavoriteTagSchema,
+  tagIdParamsSchema,
 } from "./card.validation";
 import {
   createCardHandler,
@@ -13,6 +17,10 @@ import {
   getCardHandler,
   updateCardHandler,
   searchCardsHandler,
+  attachTagHandler,
+  detachTagHandler,
+  reorderTagsHandler,
+  toggleFavoriteTagHandler,
 } from "./card.controller";
 
 export const cardRouter = Router();
@@ -36,3 +44,28 @@ cardRouter.patch(
 );
 
 cardRouter.delete("/cards/:id", validate({ params: cardIdParamsSchema }), deleteCardHandler);
+
+// Card tags operations
+cardRouter.post(
+  "/cards/:id/tags",
+  validate({ params: cardIdParamsSchema, body: attachTagSchema }),
+  attachTagHandler
+);
+
+cardRouter.delete(
+  "/cards/:id/tags/:tagId",
+  validate({ params: tagIdParamsSchema }),
+  detachTagHandler
+);
+
+cardRouter.patch(
+  "/cards/:id/tags/reorder",
+  validate({ params: cardIdParamsSchema, body: reorderCardTagsSchema }),
+  reorderTagsHandler
+);
+
+cardRouter.patch(
+  "/cards/:id/tags/:tagId/favorite",
+  validate({ params: tagIdParamsSchema, body: toggleFavoriteTagSchema }),
+  toggleFavoriteTagHandler
+);

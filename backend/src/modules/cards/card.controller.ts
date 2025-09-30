@@ -1,7 +1,7 @@
-﻿import { Request, Response } from "express";
+import { Request, Response } from "express";
 import { asyncHandler } from "../../middleware/async-handler";
 import { HttpError } from "../../utils/http-error";
-import { createCard, deleteCard, getCard, searchCards, updateCard } from "./card.service";
+import { createCard, deleteCard, getCard, searchCards, updateCard, attachTagToCard, detachTagFromCard, reorderCardTags, toggleFavoriteTag } from "./card.service";
 import { searchCardsQuerySchema } from "./card.validation";
 
 export const createCardHandler = asyncHandler(async (req: Request, res: Response) => {
@@ -43,4 +43,28 @@ export const searchCardsHandler = asyncHandler(async (req: Request, res: Respons
   const { q, limit } = searchCardsQuerySchema.parse(req.query);
   const results = await searchCards(req.user, q, limit ?? 10);
   res.json({ cards: results });
+});
+
+export const attachTagHandler = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw new HttpError(401, "Требуется авторизация");
+  const card = await attachTagToCard(req.user, req.params.id, req.body.tagId);
+  res.json({ card });
+});
+
+export const detachTagHandler = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw new HttpError(401, "Требуется авторизация");
+  const card = await detachTagFromCard(req.user, req.params.id, req.params.tagId);
+  res.json({ card });
+});
+
+export const reorderTagsHandler = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw new HttpError(401, "Требуется авторизация");
+  const card = await reorderCardTags(req.user, req.params.id, req.body.tagIds);
+  res.json({ card });
+});
+
+export const toggleFavoriteTagHandler = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw new HttpError(401, "Требуется авторизация");
+  const card = await toggleFavoriteTag(req.user, req.params.id, req.params.tagId, req.body.isFavorite);
+  res.json({ card });
 });

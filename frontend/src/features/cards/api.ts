@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api-client";
 import type { Card, CardStatus } from "@/types";
+import type { Tag } from "@/types";
 
 export interface CreateCardPayload {
   title: string;
@@ -36,5 +37,25 @@ export async function deleteCard(cardId: string) {
 
 export async function getCard(cardId: string) {
   const response = await apiClient.get<{ card: Card }>(`/cards/${cardId}`);
+  return response.data.card;
+}
+
+export async function attachTag(cardId: string, tagId: string) {
+  const response = await apiClient.post<{ card: Card }>(`/cards/${cardId}/tags`, { tagId });
+  return response.data.card;
+}
+
+export async function detachTag(cardId: string, tagId: string) {
+  const response = await apiClient.delete<{ card: Card }>(`/cards/${cardId}/tags/${tagId}`);
+  return response.data.card;
+}
+
+export async function reorderTags(cardId: string, tagIds: string[]) {
+  const response = await apiClient.patch<{ card: Card }>(`/cards/${cardId}/tags/reorder`, { tagIds });
+  return response.data.card;
+}
+
+export async function toggleFavoriteTag(cardId: string, tagId: string, isFavorite: boolean) {
+  const response = await apiClient.patch<{ card: Card }>(`/cards/${cardId}/tags/${tagId}/favorite`, { isFavorite });
   return response.data.card;
 }

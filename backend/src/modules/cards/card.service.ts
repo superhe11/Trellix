@@ -1,4 +1,4 @@
-﻿import { BoardRole, CardStatus, Prisma, UserRole } from "@prisma/client";
+import { BoardRole, CardStatus, Prisma, UserRole } from "@prisma/client";
 import { prisma } from "../../prisma";
 import { HttpError } from "../../utils/http-error";
 
@@ -30,6 +30,12 @@ const cardInclude = {
         },
       },
     },
+  },
+  tags: {
+    include: {
+      tag: true,
+    },
+    orderBy: { position: "asc" as const },
   },
 } as const;
 
@@ -417,6 +423,117 @@ export async function searchCards(user: Express.UserPayload, query: string, limi
     listTitle: c.list.title,
     boardTitle: c.list.board.title,
   }));
+}
+
+export async function attachTagToCard(user: Express.UserPayload, cardId: string, tagId: string) {
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    select: {
+      id: true,
+      list: { select: { boardId: true, board: { select: { ownerId: true, members: { select: { userId: true, role: true, canManageCards: true } } } } } },
+      createdById: true,
+      assignments: { select: { userId: true, user: { select: { managerId: true } } } },
+    },
+  });
+  if (!card) throw new HttpError(404, "Карточка не найдена");
+  ensureCardManageRights(user, card.list.board, card);
+
+  const tag = await prisma.tag.findUnique({ where: { id: tagId }, select: { id: true, boardId: true } });
+  if (!tag) throw new HttpError(404, "Тег не найден");
+  if (tag.boardId !== card.list.boardId) throw new HttpError(400, "Тег принадлежит другой доске");
+
+  // Find next position
+  const max = await prisma.cardTag.aggregate({ where: { cardId }, _max: { position: true } });
+  const position = (max._max.position ?? 0) + 1;
+
+  await prisma.cardTag.create({ data: { cardId, tagId, position } });
+
+  return prisma.card.findUnique({ where: { id: cardId }, include: cardInclude });
+}
+
+export async function detachTagFromCard(user: Express.UserPayload, cardId: string, tagId: string) {
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    select: {
+      id: true,
+      list: { select: { boardId: true, board: { select: { ownerId: true, members: { select: { userId: true, role: true, canManageCards: true } } } } } },
+      createdById: true,
+      assignments: { select: { userId: true, user: { select: { managerId: true } } } },
+    },
+  });
+  if (!card) throw new HttpError(404, "Карточка не найдена");
+  ensureCardManageRights(user, card.list.board, card);
+
+  await prisma.cardTag.delete({ where: { cardId_tagId: { cardId, tagId } } });
+
+  return prisma.card.findUnique({ where: { id: cardId }, include: cardInclude });
+}
+
+export async function reorderCardTags(user: Express.UserPayload, cardId: string, tagIds: string[]) {
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    select: {
+      id: true,
+      list: { select: { boardId: true, board: { select: { ownerId: true, members: { select: { userId: true, role: true, canManageCards: true } } } } } },
+      createdById: true,
+      assignments: { select: { userId: true, user: { select: { managerId: true } } } },
+    },
+  });
+  if (!card) throw new HttpError(404, "Карточка не найдена");
+  ensureCardManageRights(user, card.list.board, card);
+
+  const existing = await prisma.cardTag.findMany({ where: { cardId }, select: { tagId: true } });
+  const existingSet = new Set(existing.map((e) => e.tagId));
+  if (existingSet.size !== tagIds.length || tagIds.some((id) => !existingSet.has(id))) {
+    throw new HttpError(400, "Список тегов должен содержать все текущие теги карточки");
+  }
+
+  await prisma.$transaction(
+    tagIds.map((tagId, index) =>
+      prisma.cardTag.update({ where: { cardId_tagId: { cardId, tagId } }, data: { position: index + 1 } })
+    )
+  );
+
+  return prisma.card.findUnique({ where: { id: cardId }, include: cardInclude });
+}
+
+export async function toggleFavoriteTag(user: Express.UserPayload, cardId: string, tagId: string, isFavorite: boolean) {
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    select: {
+      id: true,
+      list: { select: { boardId: true, board: { select: { ownerId: true, members: { select: { userId: true, role: true, canManageCards: true } } } } } },
+      createdById: true,
+      assignments: { select: { userId: true, user: { select: { managerId: true } } } },
+    },
+  });
+  if (!card) throw new HttpError(404, "Карточка не найдена");
+  ensureCardManageRights(user, card.list.board, card);
+
+  return prisma.$transaction(async (tx) => {
+    const tags = await tx.cardTag.findMany({ where: { cardId }, orderBy: { position: 'asc' } });
+
+    if (isFavorite) {
+      // Сбрасываем избранный у всех
+      await tx.cardTag.updateMany({ where: { cardId }, data: { isFavorite: false } });
+      // Назначаем избранный выбранному тегу
+      await tx.cardTag.update({ where: { cardId_tagId: { cardId, tagId } }, data: { isFavorite: true } });
+
+      // Перемещаем выбранный тег наверх (position = 1), переназначаем позиции остальным
+      const otherTags = tags.filter((t) => t.tagId !== tagId);
+      await tx.cardTag.update({ where: { cardId_tagId: { cardId, tagId } }, data: { position: 1 } });
+      let pos = 2;
+      for (const t of otherTags) {
+        await tx.cardTag.update({ where: { cardId_tagId: { cardId, tagId: t.tagId } }, data: { position: pos } });
+        pos += 1;
+      }
+    } else {
+      await tx.cardTag.update({ where: { cardId_tagId: { cardId, tagId } }, data: { isFavorite: false } });
+      // Не меняем порядок при снятии избранного
+    }
+
+    return tx.card.findUnique({ where: { id: cardId }, include: cardInclude });
+  });
 }
 
 async function ensureCardCreationRights(

@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { CardStatus } from "@prisma/client";
 
 export const createCardSchema = z.object({
@@ -31,4 +31,21 @@ export const listIdParamsSchema = z.object({
 export const searchCardsQuerySchema = z.object({
   q: z.string().min(2),
   limit: z.coerce.number().int().positive().max(50).optional(),
+});
+
+export const attachTagSchema = z.object({
+  tagId: z.string().uuid(),
+});
+
+export const reorderCardTagsSchema = z.object({
+  tagIds: z.array(z.string().uuid()).nonempty(),
+});
+
+export const toggleFavoriteTagSchema = z.object({
+  isFavorite: z.boolean(),
+});
+
+export const tagIdParamsSchema = z.object({
+  id: z.string().uuid(),
+  tagId: z.string().uuid(),
 });

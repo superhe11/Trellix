@@ -37,10 +37,12 @@ export interface Card {
   dueDate?: string | null;
   archived?: boolean;
   listId: string;
+  list?: { id: string; title: string; boardId: string };
   createdAt: string;
   updatedAt: string;
   createdBy: User;
   assignments: CardAssignment[];
+  tags?: CardTag[];
 }
 
 export interface List {
@@ -79,4 +81,22 @@ export interface ApiError {
 export interface Paginated<T> {
   items: T[];
   total: number;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+  boardId: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CardTag {
+  id: string;
+  cardId: string;
+  tagId: string;
+  position: number;
+  isFavorite: boolean;
+  tag: Tag;
 }

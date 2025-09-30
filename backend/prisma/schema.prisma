@@ -54,6 +54,7 @@ model Board {
   owner     User           @relation("BoardOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members   BoardMember[]
   lists     List[]
+  tags      Tag[]
   activity  ActivityLog[]
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
@@ -101,6 +102,7 @@ model Card {
   createdBy    User             @relation("CardsCreated", fields: [createdById], references: [id])
   list         List             @relation(fields: [listId], references: [id], onDelete: Cascade)
   assignments  CardAssignment[]
+  tags         CardTag[]
   activity     ActivityLog[]
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
@@ -150,4 +152,33 @@ model RefreshToken {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+model Tag {
+  id        String   @id @default(uuid())
+  name      String
+  color     String
+  boardId   String
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards     CardTag[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([boardId])
+  @@unique([boardId, name])
+}
+
+model CardTag {
+  id         String   @id @default(uuid())
+  cardId     String
+  tagId      String
+  position   Int
+  isFavorite Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, position])
+  @@unique([cardId, tagId])
 }

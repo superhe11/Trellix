@@ -1,4 +1,4 @@
-﻿import { BoardRole, Prisma, UserRole } from "@prisma/client";
+import { BoardRole, Prisma, UserRole } from "@prisma/client";
 import { prisma } from "../../prisma";
 import { HttpError } from "../../utils/http-error";
 
