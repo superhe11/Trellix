@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getBoards, createBoard } from "@/features/boards/api";
 import type { CreateBoardPayload } from "@/features/boards/api";
@@ -27,7 +27,7 @@ export function BoardsPage() {
   const user = useAuthStore((state) => state.user);
   const userId = user?.id;
 
-  const { data: boards, isPending: isBoardsPending } = useQuery({
+  const { data: boards, isLoading: isBoardsPending } = useQuery({
     queryKey: ["boards", userId],
     queryFn: getBoards,
     enabled: Boolean(userId),

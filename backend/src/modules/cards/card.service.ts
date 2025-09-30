@@ -160,8 +160,9 @@ export async function updateCard(
 
   return prisma.$transaction(async (tx) => {
     let targetListId = card.list.id;
+    const isMovingBetweenLists = payload.listId && payload.listId !== card.list.id;
 
-    if (payload.listId && payload.listId !== card.list.id) {
+    if (isMovingBetweenLists) {
       const targetList = await tx.list.findUnique({
         where: { id: payload.listId },
         select: { id: true, boardId: true },
@@ -175,7 +176,68 @@ export async function updateCard(
       targetListId = targetList.id;
     }
 
-    const position = await resolvePositionForCard(targetListId, payload.position, tx);
+    // Если указана позиция, нужно пересчитать позиции других карточек
+    if (payload.position !== undefined) {
+      if (isMovingBetweenLists) {
+        // Перемещение между списками: сдвигаем карточки в целевом списке
+        await tx.card.updateMany({
+          where: {
+            listId: targetListId,
+            position: { gte: payload.position },
+          },
+          data: {
+            position: { increment: 1 },
+          },
+        });
+        
+        // Сжимаем позиции в исходном списке
+        await tx.card.updateMany({
+          where: {
+            listId: card.list.id,
+            position: { gt: (await tx.card.findUnique({ where: { id: cardId }, select: { position: true } }))?.position || 0 },
+          },
+          data: {
+            position: { decrement: 1 },
+          },
+        });
+      } else {
+        // Перемещение внутри списка
+        const currentCard = await tx.card.findUnique({
+          where: { id: cardId },
+          select: { position: true },
+        });
+        
+        if (currentCard && currentCard.position !== payload.position) {
+          if (payload.position > currentCard.position) {
+            // Перемещение вниз: сдвигаем карточки между старой и новой позицией вверх
+            await tx.card.updateMany({
+              where: {
+                listId: targetListId,
+                position: { gt: currentCard.position, lte: payload.position },
+                id: { not: cardId },
+              },
+              data: {
+                position: { decrement: 1 },
+              },
+            });
+          } else {
+            // Перемещение вверх: сдвигаем карточки между новой и старой позицией вниз
+            await tx.card.updateMany({
+              where: {
+                listId: targetListId,
+                position: { gte: payload.position, lt: currentCard.position },
+                id: { not: cardId },
+              },
+              data: {
+                position: { increment: 1 },
+              },
+            });
+          }
+        }
+      }
+    }
+
+    const position = payload.position ?? (await resolvePositionForCard(targetListId, undefined, tx));
     const dueDate =
       payload.dueDate === undefined ? undefined : payload.dueDate ? new Date(payload.dueDate) : null;
 

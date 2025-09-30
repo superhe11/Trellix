@@ -1,10 +1,6 @@
-﻿import { useEffect, useState } from "react";
+﻿﻿import { useEffect, useState, useCallback, memo, useMemo, useRef } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { DndContext, DragOverlay, PointerSensor, useSensors, useSensor } from "@dnd-kit/core";
-import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Plus, Trash2, Pencil, Tag } from "lucide-react";
@@ -20,10 +16,14 @@ import { createCard, updateCard, deleteCard } from "@/features/cards/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Card as UiCard } from "@/components/ui/card";
+// import { Card as UiCard } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import type { List, Card as CardType } from "@/types";
+// Debug helpers: always log (including production)
+const debugCount = (label: string) => { console.count(label); };
+const debugLog = (...args: any[]) => { console.log(...args); };
+import { MoveCardMutator } from "@/features/cards/components/MoveCardMutator";
 
 const listSchema = z.object({
   title: z.string().min(2, "Минимальная длина — 2 символа"),
@@ -46,7 +46,6 @@ export function BoardPage() {
   const isEmployee = user?.role === "EMPLOYEE";
   const canManageLists = !isEmployee;
 
-  const [activeCard, setActiveCard] = useState<CardType | null>(null);
   const [cardListId, setCardListId] = useState<string | null>(null);
   const [editingCard, setEditingCard] = useState<CardType | null>(null);
 
@@ -54,13 +53,10 @@ export function BoardPage() {
     queryKey: ["board", boardId],
     queryFn: () => getBoard(boardId!),
     enabled: Boolean(boardId),
+    staleTime: 5 * 60 * 1000, // 5 минут - данные считаются свежими
   });
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { delay: 100, tolerance: 8 },
-    })
-  );
+  // В @hello-pangea/dnd не нужно настраивать сенсоры
 
   // Scroll and highlight when navigated from search (always register hook)
   useEffect(() => {
@@ -94,11 +90,6 @@ export function BoardPage() {
     onError: () => toast.error("Не удалось создать карточку"),
   });
 
-  const updateCardMutation = useMutation({
-    mutationFn: ({ cardId, listId, position }: { cardId: string; listId: string; position: number }) =>
-      updateCard(cardId, { listId, position }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", boardId] }),
-  });
 
   const updateCardDetailsMutation = useMutation({
     mutationFn: ({ cardId, title, description }: { cardId: string; title?: string; description?: string }) =>
@@ -126,6 +117,20 @@ export function BoardPage() {
     },
   });
 
+  // Вынесенная мутация перемещения карточки — дочерний компонент отдаёт mutate через ref
+  const moveCardMutateRef = useRef<((payload: { cardId: string; listId: string; position: number }) => void) | null>(null);
+
+  // Стабильные обработчики (расположены до условного return)
+  const handleAddCardOpen = useCallback((listId: string) => {
+    setCardListId(listId);
+  }, []);
+  const handleDeleteListStable = useCallback((listId: string) => {
+    deleteListMutation.mutate(listId);
+  }, [deleteListMutation.mutate]);
+  const handleRemoveCardStable = useCallback((cardId: string) => {
+    deleteCardMutation.mutate(cardId);
+  }, [deleteCardMutation.mutate]);
+
   const {
     register: registerList,
     handleSubmit: handleSubmitList,
@@ -147,16 +152,16 @@ export function BoardPage() {
     formState: { errors: editCardErrors },
   } = useForm<CardSchema>({ resolver: zodResolver(cardSchema) });
 
-  const handleCreateList = (data: ListSchema) => {
+  const handleCreateList = useCallback((data: ListSchema) => {
     createListMutation.mutate(
       { title: data.title },
       {
         onSuccess: () => resetList(),
       }
     );
-  };
+  }, [createListMutation, resetList]);
 
-  const handleCreateCard = (data: CardSchema) => {
+  const handleCreateCard = useCallback((data: CardSchema) => {
     if (!cardListId) return;
     createCardMutation.mutate(
       { listId: cardListId, title: data.title, description: data.description },
@@ -167,21 +172,16 @@ export function BoardPage() {
         },
       }
     );
-  };
+  }, [cardListId, createCardMutation, resetCard]);
 
-  const handleDragStart = (event: DragStartEvent) => {
-    const card = event.active.data.current?.card as CardType | undefined;
-    if (card) {
-      setActiveCard(card);
-    }
-  };
+  // В @hello-pangea/dnd нет события dragStart
 
-  const handleOpenEdit = (card: CardType) => {
+  const handleOpenEdit = useCallback((card: CardType) => {
     setEditingCard(card);
     resetEditCard({ title: card.title, description: card.description ?? undefined });
-  };
+  }, [resetEditCard]);
 
-  const handleEditCard = (data: CardSchema) => {
+  const handleEditCard = useCallback((data: CardSchema) => {
     if (!editingCard) return;
     updateCardDetailsMutation.mutate(
       { cardId: editingCard.id, title: data.title, description: data.description },
@@ -191,32 +191,7 @@ export function BoardPage() {
         },
       }
     );
-  };
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    setActiveCard(null);
-    const { active, over } = event;
-    if (!over || active.id === over.id || !board) {
-      return;
-    }
-
-    const fromListId = active.data.current?.listId as string;
-    const toListId = over.data.current?.listId as string;
-    const overIndex = over.data.current?.index as number | undefined;
-
-    if (!fromListId || !toListId) {
-      return;
-    }
-
-    const targetList = board.lists.find((list) => list.id === toListId);
-    const targetPosition = (overIndex ?? targetList?.cards.length ?? 0) + 1;
-
-    updateCardMutation.mutate({
-      cardId: active.id as string,
-      listId: toListId,
-      position: targetPosition,
-    });
-  };
+  }, [editingCard, updateCardDetailsMutation]);
 
   if (isLoading || !board) {
     return <div className="text-slate-400">Загружаем данные...</div>;
@@ -226,18 +201,14 @@ export function BoardPage() {
   const canManageAllCards = Boolean(
     user &&
       (user.role === "ADMIN" ||
-        board.owner?.id === user.id ||
-        board.members.some((m) => m.user.id === user.id && (m.role === "OWNER" || m.role === "MANAGER")))
+        board?.owner?.id === user.id ||
+        board?.members?.some((m) => m.user.id === user.id && (m.role === "OWNER" || m.role === "MANAGER")))
   );
-
-  const dropAnimationConfig = {
-    duration: 250,
-    easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
-    dragSourceOpacity: 0.5,
-  } as const;
+  debugCount(`[BoardPage] render`);
 
   return (
     <div className="space-y-6">
+      <MoveCardMutator boardId={boardId!} onReady={(mutate) => { moveCardMutateRef.current = mutate; }} />
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Командная доска</p>
@@ -253,15 +224,14 @@ export function BoardPage() {
         )}
       </header>
 
-      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-        <div className="flex gap-5 overflow-x-auto pb-4">
+      <div className="flex gap-5 pb-4">
           {board.lists.map((list) => (
             <KanbanColumn
               key={list.id}
               list={list}
-              onAddCard={() => setCardListId(list.id)}
-              onDelete={() => deleteListMutation.mutate(list.id)}
-              onRemoveCard={(cardId) => deleteCardMutation.mutate(cardId)}
+              onAddCard={handleAddCardOpen}
+              onDeleteList={handleDeleteListStable}
+              onRemoveCard={handleRemoveCardStable}
               canManageLists={canManageLists}
               currentUserId={user?.id}
               currentUserRole={user?.role}
@@ -276,7 +246,7 @@ export function BoardPage() {
               onSubmit={handleSubmitList(handleCreateList)}
             >
               <p className="text-sm font-medium text-white/80">Новый список</p>
-              <Input placeholder="Например, “В работе”" {...registerList("title")} />
+              <Input placeholder="Например, 'В работе'" {...registerList("title")} />
               {listErrors.title && <p className="text-xs text-danger">{listErrors.title.message}</p>}
               <Button type="submit" size="sm" loading={createListMutation.isPending}>
                 <Plus className="h-4 w-4" /> Добавить
@@ -284,9 +254,6 @@ export function BoardPage() {
             </form>
           )}
         </div>
-
-        <DragOverlay dropAnimation={dropAnimationConfig}>{activeCard && <DragOverlayCard card={activeCard} />}</DragOverlay>
-      </DndContext>
 
       <Modal
         isOpen={cardListId !== null}
@@ -347,8 +314,8 @@ export function BoardPage() {
 
 interface KanbanColumnProps {
   list: List;
-  onAddCard: () => void;
-  onDelete: () => void;
+  onAddCard: (listId: string) => void;
+  onDeleteList: (listId: string) => void;
   onRemoveCard: (cardId: string) => void;
   canManageLists: boolean;
   currentUserId?: string;
@@ -357,8 +324,14 @@ interface KanbanColumnProps {
   onEditCard: (card: CardType) => void;
 }
 
-function KanbanColumn({ list, onAddCard, onDelete, onRemoveCard, canManageLists, currentUserId, currentUserRole, canManageAllCards, onEditCard }: KanbanColumnProps) {
+const KanbanColumn = memo(function KanbanColumn({ list, onAddCard, onDeleteList, onRemoveCard, canManageLists, currentUserId, currentUserRole, canManageAllCards, onEditCard }: KanbanColumnProps) {
   const cardCount = list.cards.length;
+  // Render/mount debug for KanbanColumn
+  debugCount(`[KanbanColumn] render ${list.id} cards:${cardCount}`);
+  useEffect(() => {
+    debugLog('[KanbanColumn] mount', list.id);
+    return () => debugLog('[KanbanColumn] unmount', list.id);
+  }, []);
 
   return (
     <section className="flex min-w-[280px] max-w-[340px] flex-col gap-4 rounded-3xl border border-white/5 bg-white/5 p-4">
@@ -370,7 +343,7 @@ function KanbanColumn({ list, onAddCard, onDelete, onRemoveCard, canManageLists,
         {canManageLists && (
           <button
             className="rounded-full p-2 text-slate-500 transition hover:bg-white/10 hover:text-danger"
-            onClick={onDelete}
+            onClick={() => onDeleteList(list.id)}
             title="Удалить список"
           >
             <Trash2 className="h-4 w-4" />
@@ -378,124 +351,135 @@ function KanbanColumn({ list, onAddCard, onDelete, onRemoveCard, canManageLists,
         )}
       </header>
 
-      <SortableContext items={list.cards.map((card) => card.id)} strategy={verticalListSortingStrategy}>
-        <div className="space-y-3">
-          {list.cards.map((card, index) => (
-            <KanbanCard
-              key={card.id}
-              card={card}
-              listId={list.id}
-              index={index}
-              onRemove={() => onRemoveCard(card.id)}
-              currentUserId={currentUserId}
-              currentUserRole={currentUserRole}
-              canManageAllCards={canManageAllCards}
-              onEdit={() => onEditCard(card)}
-            />
-          ))}
-          {!list.cards.length && (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 p-4 text-center text-xs text-slate-500">
-              Карточек пока нет
-            </div>
-          )}
-        </div>
-      </SortableContext>
+      <div className="min-h-[50px] overflow-y-auto max-h-[80vh] relative">
+        {list.cards.map((card, index) => (
+          <KanbanCard
+            key={card.id}
+            card={card}
+            listId={list.id}
+            index={index}
+            onRemove={onRemoveCard}
+            currentUserId={currentUserId}
+            currentUserRole={currentUserRole}
+            canManageAllCards={canManageAllCards}
+            onEdit={onEditCard}
+          />
+        ))}
+        {!list.cards.length && (
+          <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 p-4 text-center text-xs text-slate-500">
+            Карточек пока нет
+          </div>
+        )}
+      </div>
 
-      <Button variant="ghost" size="sm" className="w-full justify-center" onClick={onAddCard}>
+      <Button variant="ghost" size="sm" className="w-full justify-center" onClick={() => onAddCard(list.id)}>
         <Plus className="h-4 w-4" /> Добавить карточку
       </Button>
     </section>
   );
-}
+});
 
 interface KanbanCardProps {
   card: CardType;
-  listId: string;
+  listId?: string; // Сделаем необязательным, так как не используется
   index: number;
-  onRemove: () => void;
+  onRemove: (cardId: string) => void;
   currentUserId?: string;
   currentUserRole?: string;
   canManageAllCards: boolean;
-  onEdit: () => void;
+  onEdit: (card: CardType) => void;
 }
 
-function KanbanCard({ card, listId, index, onRemove, currentUserId, currentUserRole, canManageAllCards, onEdit }: KanbanCardProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: card.id,
-    data: { card, listId, index },
-  });
+ function areCardPropsEqual(prev: KanbanCardProps, next: KanbanCardProps) {
+   return (
+     prev.card.id === next.card.id &&
+     prev.card.title === next.card.title &&
+     prev.card.status === next.card.status &&
+     prev.card.dueDate === next.card.dueDate &&
+     prev.index === next.index &&
+     prev.canManageAllCards === next.canManageAllCards &&
+     prev.currentUserId === next.currentUserId &&
+     prev.currentUserRole === next.currentUserRole
+   );
+ }
 
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition: transition || "transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)",
-    boxShadow: isDragging ? "0 12px 30px rgba(0,0,0,0.35)" : "0 4px 16px rgba(0,0,0,0.25)",
-    cursor: isDragging ? "grabbing" : "grab",
-  };
+ const KanbanCard = memo(function KanbanCard({ card, /* listId, */ index, onRemove, currentUserId, currentUserRole, canManageAllCards, onEdit }: KanbanCardProps) {
+  // Кэшируем вычисление canManageCard для избежания повторных вычислений
+  const canManageCard = useMemo(() => 
+    canManageAllCards || (currentUserRole !== "EMPLOYEE" && !!currentUserRole) || card.createdBy.id === currentUserId,
+    [canManageAllCards, currentUserRole, card.createdBy.id, currentUserId]
+  );
 
-  const canManageCard =
-    canManageAllCards || (currentUserRole !== "EMPLOYEE" && !!currentUserRole) || card.createdBy.id === currentUserId;
+  // Кэшируем статус карточки для избежания повторных вычислений
+  const cardStatus = useMemo(() => renderStatus(card), [card.status]);
+
+  // Кэшируем дату для избежания повторных форматирований
+  const formattedDate = useMemo(() => 
+    card.dueDate ? format(new Date(card.dueDate), "d MMM", { locale: ru }) : null,
+    [card.dueDate]
+  );
+  // Render/mount debug for KanbanCard
+  debugCount(`[KanbanCard] render ${card.id}`);
+  useEffect(() => {
+    debugLog('[KanbanCard] mount', card.id);
+    return () => debugLog('[KanbanCard] unmount', card.id);
+  }, []);
 
   return (
     <div
       id={`card-${card.id}`}
-      ref={setNodeRef}
-      style={style}
-      className={`group select-none rounded-2xl border border-white/10 bg-surface/80 p-4 text-left shadow-lg transition hover:-translate-y-[1px] hover:border-primary/40 ${
-        isDragging ? "opacity-60" : ""
-      }`}
+      className="group select-none rounded-2xl border border-white/10 bg-surface/80 p-4 text-left shadow-lg transition hover:-translate-y-[1px] hover:border-primary/40"
+      style={{
+        marginBottom: 12,
+        minHeight: 50,
+        boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+      }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 cursor-grab" {...attributes} {...listeners}>
-          <p className="text-sm font-semibold text-white">{card.title}</p>
-        </div>
-        {canManageCard && (
-          <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
-            <button
-              className="rounded-full p-1 text-slate-500 transition hover:bg-white/10"
-              title="Редактировать карточку"
-              onPointerDown={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
-            <button
-              className="rounded-full p-1 text-slate-500 transition hover:bg-white/10 hover:text-danger"
-              onPointerDown={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove();
-              }}
-              title="Удалить карточку"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-white">{card.title}</p>
+            </div>
+            {canManageCard && (
+              <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+                <button
+                  className="rounded-full p-1 text-slate-500 transition hover:bg-white/10"
+                  title="Редактировать карточку"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(card);
+                  }}
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  className="rounded-full p-1 text-slate-500 transition hover:bg-white/10 hover:text-danger"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemove(card.id);
+                  }}
+                  title="Удалить карточку"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      {card.description && <p className="mt-2 line-clamp-3 text-xs text-slate-400">{card.description}</p>}
-      <footer className="mt-3 flex items-center justify-between text-xs text-slate-500">
-        <span className="flex items-center gap-1">
-          <Tag className="h-3 w-3" /> {renderStatus(card)}
-        </span>
-        {card.dueDate && <span>{format(new Date(card.dueDate), "d MMM", { locale: ru })}</span>}
-      </footer>
-    </div>
+          {card.description && <p className="mt-2 line-clamp-3 text-xs text-slate-400">{card.description}</p>}
+          <footer className="mt-3 flex items-center justify-between text-xs text-slate-500">
+            <span className="flex items-center gap-1">
+              <Tag className="h-3 w-3" /> {cardStatus}
+            </span>
+            {formattedDate && <span>{formattedDate}</span>}
+          </footer>
+        </div>
   );
-}
+ }, areCardPropsEqual);
 
-function DragOverlayCard({ card }: { card: CardType }) {
-  return (
-    <UiCard className="pointer-events-none w-72 rounded-2xl border border-primary/40 bg-surface/90 p-4 shadow-xl">
-      <p className="text-sm font-semibold text-white">{card.title}</p>
-      {card.description && <p className="mt-2 line-clamp-3 text-xs text-slate-400">{card.description}</p>}
-    </UiCard>
-  );
-}
+// DragOverlayCard удален, так как в @hello-pangea/dnd нет компонента DragOverlay
 
 function renderStatus(card: CardType) {
   switch (card.status) {
