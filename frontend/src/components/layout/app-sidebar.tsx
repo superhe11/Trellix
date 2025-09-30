@@ -1,4 +1,4 @@
-﻿import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { LayoutDashboard, ShieldCheck, LogOut, Sparkles, Briefcase } from "lucide-react";
 import type { UserRole } from "@/types";
 import type React from "react";

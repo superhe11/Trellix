@@ -1,4 +1,4 @@
-﻿import { apiClient } from "@/lib/api-client";
+import { apiClient } from "@/lib/api-client";
 import type { List } from "@/types";
 
 export interface CreateListPayload {

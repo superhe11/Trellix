@@ -1,4 +1,4 @@
-﻿import { AxiosError } from "axios";
+import { AxiosError } from "axios";
 import type { ApiError } from "@/types";
 
 const STATUS_MESSAGES: Record<number, string> = {

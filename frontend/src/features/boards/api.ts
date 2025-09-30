@@ -1,4 +1,4 @@
-﻿import { apiClient } from "@/lib/api-client";
+import { apiClient } from "@/lib/api-client";
 import type { Board, BoardMember } from "@/types";
 
 export interface CreateBoardPayload {
