@@ -1,4 +1,4 @@
-﻿﻿import { useEffect, useState, useCallback, memo, useMemo, useRef } from "react";
+﻿﻿﻿﻿import { useEffect, useState, useCallback, memo, useMemo, useRef } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -62,6 +62,7 @@ export function BoardPage() {
 
   const [cardListId, setCardListId] = useState<string | null>(null);
   const [editingCard, setEditingCard] = useState<CardType | null>(null);
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
   const [activeCard, setActiveCard] = useState<CardType | null>(null);
 
   const { data: boardTags } = useQuery({
@@ -424,6 +425,7 @@ export function BoardPage() {
 
   const handleOpenEdit = useCallback((card: CardType) => {
     setEditingCard(card);
+    setIsEditMode(false);
     resetEditCard({ title: card.title, description: card.description ?? undefined });
   }, [resetEditCard]);
 
@@ -548,119 +550,164 @@ export function BoardPage() {
       <Modal
         isOpen={editingCard !== null}
         onClose={() => setEditingCard(null)}
-        title="Редактирование карточки"
-        description="Измените поля карточки"
+        title={isEditMode ? "Редактирование карточки" : "Просмотр карточки"}
+        description={isEditMode ? "Измените поля карточки и теги" : "Название, описание и теги"}
       >
-        <form className="space-y-4">
+        <form className="space-y-4" onSubmit={isEditMode ? handleSubmitEditCard(handleEditCard) : (e) => e.preventDefault()}>
           {editingCard && (
-            <div className="space-y-3">
-              <label className="text-sm text-slate-300">Теги</label>
-              <div className="flex flex-wrap gap-2">
-                {boardTags?.map((t) => {
-                  const selected = editingCard.tags?.some((ct) => ct.tag.id === t.id);
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      className={`px-2 py-1 rounded-md border text-xs ${selected ? 'border-blue-400/40 text-blue-300' : 'border-white/10 text-slate-400'} hover:border-white/30`}
-                      style={{ borderColor: t.color, color: t.color }}
-                      onClick={() => {
-                        if (selected) {
-                          detachTagMutation.mutate({ cardId: editingCard.id, tagId: t.id });
-                        } else {
-                          attachTagMutation.mutate({ cardId: editingCard.id, tagId: t.id });
-                        }
-                      }}
-                    >
-                      {t.name}
-                    </button>
-                  );
-                })}
+            <div className="space-y-4">
+              {/* Название */}
+              <div>
+                <label className="text-sm text-slate-300">Название</label>
+                {isEditMode ? (
+                  <>
+                    <Input placeholder="Название задачи" autoFocus {...registerEditCard("title")} />
+                    {editCardErrors.title && <p className="text-xs text-danger">{editCardErrors.title.message}</p>}
+                  </>
+                ) : (
+                  <p className="mt-1 text-sm text-white">{editingCard.title}</p>
+                )}
               </div>
-              {/* Управление тегами карточки: drag-n-drop порядок, крестик для удаления, сердечко для избранного */}
-              <div className="space-y-2">
-                <p className="text-xs uppercase text-slate-500 tracking-wider">Теги этой карточки (перетаскивайте для изменения порядка)</p>
-                <DndContext
-                  onDragEnd={(e) => {
-                    const { active, over } = e;
-                    if (!active || !over) return;
-                    const activeId = String(active.id);
-                    const overId = String(over.id);
-                    if (activeId === overId) return;
-                    const oldIndex = tagOrder.indexOf(activeId);
-                    const newIndex = tagOrder.indexOf(overId);
-                    if (oldIndex === -1 || newIndex === -1) return;
-                    const next = arrayMove(tagOrder, oldIndex, newIndex);
-                    setTagOrder(next);
-                    reorderTagsMutation.mutate({ tagIds: next });
-                  }}
-                >
-                  <SortableContext items={tagOrder} strategy={verticalListSortingStrategy}>
-                    <div className="flex flex-wrap gap-2">
-                      {(editingCard.tags ?? [])
-                        .slice()
-                        .sort((a, b) => a.position - b.position)
-                        .map((ct) => (
-                          <TagChip
-                            key={ct.tag.id}
-                            ct={ct}
-                            onDetach={(id) => {
-                              detachTagMutation.mutate({ cardId: editingCard.id, tagId: id }, {
-                                onSuccess: (updated) => {
-                                  setEditingCard(updated);
-                                  setTagOrder((updated.tags ?? []).map((t) => t.tag.id));
-                                }
-                              });
-                            }}
-                            onToggleFavorite={(id, makeFav) => {
-                              toggleFavoriteMutation.mutate({ cardId: editingCard.id, tagId: id, isFavorite: makeFav }, {
-                                onSuccess: (updated) => {
-                                  setEditingCard(updated);
-                                  setTagOrder((updated.tags ?? []).map((t) => t.tag.id));
-                                }
-                              });
-                            }}
-                          />
-                        ))}
-                    </div>
-                  </SortableContext>
-                </DndContext>
+              {/* Описание */}
+              <div>
+                <label className="text-sm text-slate-300">Описание</label>
+                {isEditMode ? (
+                  <>
+                    <Textarea rows={4} placeholder="Детали" {...registerEditCard("description")} />
+                    {editCardErrors.description && <p className="text-xs text-danger">{editCardErrors.description.message}</p>}
+                  </>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-300">{editingCard.description ?? "—"}</p>
+                )}
               </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  placeholder="Название нового тега"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const name = (e.target as HTMLInputElement).value.trim();
+
+              {/* Доступные теги доски для добавления/убирания к карточке */}
+              <div className="space-y-3">
+                <label className="text-sm text-slate-300">Теги</label>
+                <div className="flex flex-wrap gap-2">
+                  {boardTags?.map((t) => {
+                    const selected = editingCard.tags?.some((ct) => ct.tag.id === t.id);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={`px-2 py-1 rounded-md border text-xs ${selected ? 'border-blue-400/40 text-blue-300' : 'border-white/10 text-slate-400'} hover:border-white/30`}
+                        style={{ borderColor: t.color, color: t.color }}
+                        onClick={() => {
+                          if (selected) {
+                            detachTagMutation.mutate({ cardId: editingCard.id, tagId: t.id });
+                          } else {
+                            attachTagMutation.mutate({ cardId: editingCard.id, tagId: t.id });
+                          }
+                        }}
+                      >
+                        {t.name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Управление тегами карточки: drag-n-drop порядок, крестик для удаления, сердечко для избранного */}
+                <div className="space-y-2">
+                  <p className="text-xs uppercase text-slate-500 tracking-wider">Теги этой карточки (перетаскивайте для изменения порядка)</p>
+                  <DndContext
+                    onDragEnd={(e) => {
+                      const { active, over } = e;
+                      if (!active || !over) return;
+                      const activeId = String(active.id);
+                      const overId = String(over.id);
+                      if (activeId === overId) return;
+                      const oldIndex = tagOrder.indexOf(activeId);
+                      const newIndex = tagOrder.indexOf(overId);
+                      if (oldIndex === -1 || newIndex === -1) return;
+                      const next = arrayMove(tagOrder, oldIndex, newIndex);
+                      setTagOrder(next);
+                      reorderTagsMutation.mutate({ tagIds: next });
+                    }}
+                  >
+                    <SortableContext items={tagOrder} strategy={verticalListSortingStrategy}>
+                      <div className="flex flex-wrap gap-2">
+                        {(editingCard.tags ?? [])
+                          .slice()
+                          .sort((a, b) => a.position - b.position)
+                          .map((ct) => (
+                            <TagChip
+                              key={ct.tag.id}
+                              ct={ct}
+                              onDetach={(id) => {
+                                detachTagMutation.mutate({ cardId: editingCard.id, tagId: id }, {
+                                  onSuccess: (updated) => {
+                                    setEditingCard(updated);
+                                    setTagOrder((updated.tags ?? []).map((t) => t.tag.id));
+                                  }
+                                });
+                              }}
+                              onToggleFavorite={(id, makeFav) => {
+                                toggleFavoriteMutation.mutate({ cardId: editingCard.id, tagId: id, isFavorite: makeFav }, {
+                                  onSuccess: (updated) => {
+                                    setEditingCard(updated);
+                                    setTagOrder((updated.tags ?? []).map((t) => t.tag.id));
+                                  }
+                                });
+                              }}
+                            />
+                          ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                </div>
+
+                {/* Создание нового тега (опционально) */}
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Название нового тега"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const name = (e.target as HTMLInputElement).value.trim();
+                        if (!name) return;
+                        const color = '#8884d8';
+                        createTagMutation.mutate({ name, color });
+                        (e.target as HTMLInputElement).value = '';
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      const input = document.querySelector<HTMLInputElement>('input[placeholder="Название нового тега"]');
+                      const name = input?.value.trim();
                       if (!name) return;
                       const color = '#8884d8';
                       createTagMutation.mutate({ name, color });
-                      (e.target as HTMLInputElement).value = '';
-                    }
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    const input = document.querySelector<HTMLInputElement>('input[placeholder="Название нового тега"]');
-                    const name = input?.value.trim();
-                    if (!name) return;
-                    const color = '#8884d8';
-                    createTagMutation.mutate({ name, color });
-                    if (input) input.value = '';
-                  }}
-                >
-                  Добавить тег
-                </Button>
+                      if (input) input.value = '';
+                    }}
+                  >
+                    Добавить тег
+                  </Button>
+                </div>
               </div>
             </div>
           )}
           <div className="flex justify-end gap-3">
             <Button variant="ghost" type="button" onClick={() => setEditingCard(null)}>
-              Отмена
+              Закрыть
             </Button>
+            {isEditMode ? (
+              <Button type="submit" loading={updateCardDetailsMutation.isPending}>
+                Сохранить
+              </Button>
+            ) : (
+              <Button type="button" variant="secondary" onClick={() => {
+                setIsEditMode(true);
+                if (editingCard) {
+                  resetEditCard({ title: editingCard.title, description: editingCard.description ?? undefined });
+                }
+              }}>
+                Редактировать
+              </Button>
+            )}
           </div>
         </form>
       </Modal>
