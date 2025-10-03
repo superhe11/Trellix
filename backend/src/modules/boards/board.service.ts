@@ -77,6 +77,12 @@ const boardDetailInclude = {
               },
             },
           },
+          tags: {
+            include: {
+              tag: true,
+            },
+            orderBy: { position: "asc" as const },
+          },
         },
       },
     },

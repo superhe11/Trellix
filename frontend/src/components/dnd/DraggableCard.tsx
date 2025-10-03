@@ -1,9 +1,7 @@
 import React, { memo, useMemo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { format } from "date-fns";
-import { ru } from "date-fns/locale";
-import { Pencil, Trash2, Tag, Heart } from "lucide-react";
+import { Pencil, Trash2, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { Card as CardType } from "@/types";
 
@@ -20,15 +18,33 @@ interface DraggableCardProps {
 }
 
 function areCardPropsEqual(prev: DraggableCardProps, next: DraggableCardProps) {
+  // Сравниваем теги
+  const prevTagsLength = prev.card.tags?.length || 0;
+  const nextTagsLength = next.card.tags?.length || 0;
+  
+  if (prevTagsLength !== nextTagsLength) {
+    return false;
+  }
+  
+  // Если есть теги, сравниваем их содержимое
+  if (prevTagsLength > 0 && nextTagsLength > 0) {
+    const prevTagIds = prev.card.tags?.map(ct => ct.tag.id).sort().join(',') || '';
+    const nextTagIds = next.card.tags?.map(ct => ct.tag.id).sort().join(',') || '';
+    
+    if (prevTagIds !== nextTagIds) {
+      return false;
+    }
+  }
+  
   return (
     prev.card.id === next.card.id &&
     prev.card.title === next.card.title &&
-    prev.card.status === next.card.status &&
-    prev.card.dueDate === next.card.dueDate &&
+    prev.card.description === next.card.description &&
+    prev.card.updatedAt === next.card.updatedAt &&
     prev.index === next.index &&
-    prev.canManageAllCards === next.canManageAllCards &&
     prev.currentUserId === next.currentUserId &&
-    prev.currentUserRole === next.currentUserRole
+    prev.currentUserRole === next.currentUserRole &&
+    prev.canManageAllCards === next.canManageAllCards
   );
 }
 
@@ -67,34 +83,11 @@ export const DraggableCard = memo(function DraggableCard({
     [canManageAllCards, currentUserRole, card.createdBy.id, currentUserId]
   );
 
-  // Кэшируем статус карточки для избежания повторных вычислений
-  const cardStatus = useMemo(() => renderStatus(card), [card.status]);
-
-  // Логика отображения бейджа тега: избранный, первый или название списка
-  const favoriteCardTag = card.tags?.find((t) => t.isFavorite);
-  const firstCardTag = card.tags && card.tags.length > 0 ? card.tags[0] : undefined;
-  const chosenCardTag = favoriteCardTag ?? firstCardTag;
-  const chosenTag = chosenCardTag?.tag;
-  const tagBadgeName = chosenTag?.name ?? (card.list?.title ?? undefined);
-  const tagBadgeColor = chosenTag?.color ?? undefined;
-  const additionalTagsCount = card.tags ? Math.max(0, card.tags.length - 1) : 0;
-
-  // Кэшируем дату для избежания повторных форматирований
-  const formattedDate = useMemo(
-    () =>
-      card.dueDate
-        ? format(new Date(card.dueDate), "d MMM", { locale: ru })
-        : null,
-    [card.dueDate]
-  );
-
   const style = {
     transform: CSS.Transform.toString(transform),
-    transition: isDragging 
-      ? "none" 
-      : "transform 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94), box-shadow 200ms ease",
+    transition,
+    opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 1000 : 1,
-    opacity: isDragging ? 0 : 1, // Полностью скрываем оригинальную карточку
   };
 
   return (
@@ -103,24 +96,18 @@ export const DraggableCard = memo(function DraggableCard({
       style={style}
       {...attributes}
       {...listeners}
+      className={`group relative cursor-pointer rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm transition-all duration-200 hover:border-white/20 hover:bg-white/10 hover:shadow-lg hover:shadow-black/20 hover:scale-[1.02] ${
+        isOver ? "ring-2 ring-primary/50" : ""
+      }`}
       onClick={() => onEdit(card)}
-      id={`card-${card.id}`}
-      className={`
-        group select-none rounded-2xl border bg-surface/80 p-4 text-left shadow-lg 
-        card-transition cursor-grab active:cursor-grabbing
-        hover:card-hover hover:border-blue-300/50
-        ${isDragging 
-          ? "drag-start shadow-2xl border-blue-400/60 bg-surface/90 scale-105" 
-          : "hover:shadow-xl"
-        }
-        ${isOver ? "ring-2 ring-blue-400/40 ring-offset-2" : ""}
-      `}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-white leading-relaxed">
+      {/* Заголовок с кнопками управления */}
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex-1 min-w-0">
+          {/* Название карточки - крупно, без подписи */}
+          <h3 className="text-lg font-semibold text-white leading-tight break-words">
             {card.title}
-          </p>
+          </h3>
         </div>
         {canManageCard && (
           <div className="flex items-center gap-1 opacity-0 transition-all duration-200 group-hover:opacity-100">
@@ -152,64 +139,67 @@ export const DraggableCard = memo(function DraggableCard({
         )}
       </div>
       
+      {/* Описание - основной блок */}
       {card.description && (
-        <p className="mt-3 line-clamp-3 text-xs text-slate-400 leading-relaxed">
-          {card.description}
-        </p>
+        <div className="mb-4">
+          <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+            {card.description}
+          </p>
+        </div>
       )}
       
-      <footer className="mt-4 flex items-center justify-between text-xs text-slate-500">
-        <span className="flex items-center gap-2">
-          {tagBadgeName && (
-            <span className="flex items-center gap-1.5">
-              <Badge
-                variant="outline"
-                className="border-slate-400/30"
-                style={tagBadgeColor ? { borderColor: tagBadgeColor, color: tagBadgeColor } : undefined}
-              >
-                {tagBadgeName}
-                {additionalTagsCount > 0 && `, +${additionalTagsCount}`}
-              </Badge>
-              {chosenCardTag?.tag?.id && (
-                <button
-                  className="rounded-full p-1.5 text-slate-500 transition-all duration-200 hover:bg-white/10 hover:text-white hover:scale-110"
-                  title={chosenCardTag.isFavorite ? "Убрать из избранного" : "Сделать избранным"}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleFavorite?.(card.id, chosenCardTag.tag.id, !chosenCardTag.isFavorite);
-                  }}
-                >
-                  <Heart className={`h-3 w-3 ${chosenCardTag.isFavorite ? 'text-red-400' : ''}`} />
-                </button>
-              )}
-            </span>
+      {/* Теги внизу */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 flex-wrap">
+          {card.tags && card.tags.length > 0 ? (
+            (() => {
+              const sortedTags = card.tags
+                .slice()
+                .sort((a, b) => a.position - b.position);
+              
+              const firstTag = sortedTags[0];
+              const remainingCount = sortedTags.length - 1;
+              
+              return (
+                <div className="flex items-center gap-2">
+                  <Badge
+                    key={firstTag.tag.id}
+                    variant="outline"
+                    className="text-xs border-slate-400/30"
+                    style={firstTag.tag.color ? { 
+                      borderColor: firstTag.tag.color, 
+                      color: firstTag.tag.color 
+                    } : undefined}
+                  >
+                    {firstTag.tag.name}
+                  </Badge>
+                  {remainingCount > 0 && (
+                    <span className="text-xs text-slate-400">
+                      +{remainingCount}
+                    </span>
+                  )}
+                </div>
+              );
+            })()
+          ) : (
+            <span className="text-xs text-slate-500">Нет тегов</span>
           )}
-          <span className="flex items-center gap-1.5">
-            <Tag className="h-3 w-3" /> 
-            {cardStatus}
-          </span>
-        </span>
-        {formattedDate && (
-          <span className="px-2 py-1 rounded-md bg-white/5 text-slate-400">
-            {formattedDate}
-          </span>
-        )}
-      </footer>
+        </div>
+        
+        {/* Кнопка + для назначения тегов */}
+        <button
+          className="rounded-full p-1.5 text-slate-500 transition-all duration-200 hover:bg-white/10 hover:text-white hover:scale-110"
+          title="Назначить теги"
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit(card);
+          }}
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }, areCardPropsEqual);
-
-function renderStatus(card: CardType) {
-  switch (card.status) {
-    case "IN_PROGRESS":
-      return <Badge variant="outline" className="text-blue-400 border-blue-400/30">В работе</Badge>;
-    case "REVIEW":
-      return <Badge variant="outline" className="text-yellow-400 border-yellow-400/30">На проверке</Badge>;
-    case "DONE":
-      return <Badge variant="success" className="text-green-400 border-green-400/30">Готово</Badge>;
-    default:
-      return <Badge variant="outline" className="text-slate-400 border-slate-400/30">К выполнению</Badge>;
-  }
-}

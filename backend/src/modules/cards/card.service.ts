@@ -426,6 +426,8 @@ export async function searchCards(user: Express.UserPayload, query: string, limi
 }
 
 export async function attachTagToCard(user: Express.UserPayload, cardId: string, tagId: string) {
+  console.log(`[attachTagToCard] Starting - cardId: ${cardId}, tagId: ${tagId}, userId: ${user.userId}`);
+  
   const card = await prisma.card.findUnique({
     where: { id: cardId },
     select: {
@@ -435,18 +437,45 @@ export async function attachTagToCard(user: Express.UserPayload, cardId: string,
       assignments: { select: { userId: true, user: { select: { managerId: true } } } },
     },
   });
-  if (!card) throw new HttpError(404, "Карточка не найдена");
+  
+  if (!card) {
+    console.log(`[attachTagToCard] Card not found - cardId: ${cardId}`);
+    throw new HttpError(404, "Карточка не найдена");
+  }
+  
+  console.log(`[attachTagToCard] Card found - boardId: ${card.list.boardId}`);
   ensureCardManageRights(user, card.list.board, card);
 
   const tag = await prisma.tag.findUnique({ where: { id: tagId }, select: { id: true, boardId: true } });
-  if (!tag) throw new HttpError(404, "Тег не найден");
-  if (tag.boardId !== card.list.boardId) throw new HttpError(400, "Тег принадлежит другой доске");
+  if (!tag) {
+    console.log(`[attachTagToCard] Tag not found - tagId: ${tagId}`);
+    throw new HttpError(404, "Тег не найден");
+  }
+  
+  if (tag.boardId !== card.list.boardId) {
+    console.log(`[attachTagToCard] Tag board mismatch - tag.boardId: ${tag.boardId}, card.boardId: ${card.list.boardId}`);
+    throw new HttpError(400, "Тег принадлежит другой доске");
+  }
+
+  // Check if the tag is already attached to the card
+  const existingCardTag = await prisma.cardTag.findUnique({
+    where: { cardId_tagId: { cardId, tagId } }
+  });
+  
+  if (existingCardTag) {
+    console.log(`[attachTagToCard] Tag already attached - returning existing card`);
+    return prisma.card.findUnique({ where: { id: cardId }, include: cardInclude });
+  }
 
   // Find next position
   const max = await prisma.cardTag.aggregate({ where: { cardId }, _max: { position: true } });
   const position = (max._max.position ?? 0) + 1;
+  
+  console.log(`[attachTagToCard] Creating new CardTag - position: ${position}`);
 
   await prisma.cardTag.create({ data: { cardId, tagId, position } });
+  
+  console.log(`[attachTagToCard] CardTag created successfully`);
 
   return prisma.card.findUnique({ where: { id: cardId }, include: cardInclude });
 }

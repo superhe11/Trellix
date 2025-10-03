@@ -1,4 +1,4 @@
-﻿﻿﻿﻿import { useEffect, useState, useCallback, memo, useMemo, useRef } from "react";
+﻿import { useEffect, useState, useCallback, memo, useMemo, useRef } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -64,6 +64,12 @@ export function BoardPage() {
   const [editingCard, setEditingCard] = useState<CardType | null>(null);
   const [isEditMode, setIsEditMode] = useState<boolean>(false);
   const [activeCard, setActiveCard] = useState<CardType | null>(null);
+  
+  // Состояние для UI назначения тегов
+  const [showTagAssignment, setShowTagAssignment] = useState(false);
+  
+  // Автосохранение при изменении полей
+  const [autoSaveTimeout, setAutoSaveTimeout] = useState<NodeJS.Timeout | null>(null);
 
   const { data: boardTags } = useQuery({
     queryKey: ["board-tags", boardId],
@@ -132,25 +138,92 @@ export function BoardPage() {
   });
 
   const attachTagMutation = useMutation({
-    mutationFn: ({ cardId, tagId }: { cardId: string; tagId: string }) => attachTag(cardId, tagId),
-    onSuccess: () => {
+    mutationFn: ({ cardId, tagId }: { cardId: string; tagId: string }) => {
+      console.log(`[attachTagMutation] Starting mutation - cardId: ${cardId}, tagId: ${tagId}`);
+      return attachTag(cardId, tagId);
+    },
+    onSuccess: (data) => {
+      console.log(`[attachTagMutation] Success - data:`, data);
+      // Обновляем данные карточки в кэше
+      queryClient.setQueryData(["board", boardId], (oldData: any) => {
+        if (!oldData) return oldData;
+        
+        const newLists = oldData.lists.map((list: List) => ({
+          ...list,
+          cards: list.cards.map((card: CardType) => 
+            card.id === data.id ? data : card
+          )
+        }));
+        
+        return { ...oldData, lists: newLists };
+      });
+      
+      // Обновляем состояние editingCard, если это та же карточка
+      if (editingCard && editingCard.id === data.id) {
+        setEditingCard(data);
+      }
+      
+      // Также инвалидируем запрос для подстраховки
       queryClient.invalidateQueries({ queryKey: ["board", boardId] });
     },
-    onError: () => toast.error("Не удалось добавить тег"),
+    onError: (error) => {
+      console.error(`[attachTagMutation] Error:`, error);
+      toast.error("Не удалось добавить тег");
+    },
   });
 
   const detachTagMutation = useMutation({
     mutationFn: ({ cardId, tagId }: { cardId: string; tagId: string }) => detachTag(cardId, tagId),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Обновляем данные карточки в кэше
+      queryClient.setQueryData(["board", boardId], (oldData: any) => {
+        if (!oldData) return oldData;
+        
+        const newLists = oldData.lists.map((list: List) => ({
+          ...list,
+          cards: list.cards.map((card: CardType) => 
+            card.id === data.id ? data : card
+          )
+        }));
+        
+        return { ...oldData, lists: newLists };
+      });
+      
+      // Обновляем состояние editingCard, если это та же карточка
+      if (editingCard && editingCard.id === data.id) {
+        setEditingCard(data);
+      }
+      
+      // Также инвалидируем запрос для подстраховки
       queryClient.invalidateQueries({ queryKey: ["board", boardId] });
     },
     onError: () => toast.error("Не удалось удалить тег"),
   });
 
   const toggleFavoriteMutation = useMutation({
-    mutationFn: ({ cardId, tagId, isFavorite }: { cardId: string; tagId: string; isFavorite: boolean }) =>
+    mutationFn: ({ cardId, tagId, isFavorite }: { cardId: string; tagId: string; isFavorite: boolean }) => 
       toggleFavoriteTag(cardId, tagId, isFavorite),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Обновляем данные карточки в кэше
+      queryClient.setQueryData(["board", boardId], (oldData: any) => {
+        if (!oldData) return oldData;
+        
+        const newLists = oldData.lists.map((list: List) => ({
+          ...list,
+          cards: list.cards.map((card: CardType) => 
+            card.id === data.id ? data : card
+          )
+        }));
+        
+        return { ...oldData, lists: newLists };
+      });
+      
+      // Обновляем состояние editingCard, если это та же карточка
+      if (editingCard && editingCard.id === data.id) {
+        setEditingCard(data);
+      }
+      
+      // Также инвалидируем запрос для подстраховки
       queryClient.invalidateQueries({ queryKey: ["board", boardId] });
     },
     onError: () => toast.error("Не удалось обновить избранный тег"),
@@ -159,6 +232,21 @@ export function BoardPage() {
   const reorderTagsMutation = useMutation({
     mutationFn: ({ tagIds }: { tagIds: string[] }) => reorderTags(editingCard!.id, tagIds),
     onSuccess: (updated) => {
+      // Обновляем данные карточки в кэше
+      queryClient.setQueryData(["board", boardId], (oldData: any) => {
+        if (!oldData) return oldData;
+        
+        const newLists = oldData.lists.map((list: List) => ({
+          ...list,
+          cards: list.cards.map((card: CardType) => 
+            card.id === updated.id ? updated : card
+          )
+        }));
+        
+        return { ...oldData, lists: newLists };
+      });
+      
+      // Также инвалидируем запрос для подстраховки
       queryClient.invalidateQueries({ queryKey: ["board", boardId] });
       setEditingCard(updated);
     },
@@ -221,6 +309,7 @@ export function BoardPage() {
     register: registerEditCard,
     handleSubmit: handleSubmitEditCard,
     reset: resetEditCard,
+    getValues,
     formState: { errors: editCardErrors },
   } = useForm<CardSchema>({ resolver: zodResolver(cardSchema) });
 
@@ -445,6 +534,56 @@ export function BoardPage() {
     );
   }, [editingCard, updateCardDetailsMutation]);
 
+  // Функция автосохранения
+  const autoSaveCard = useCallback((data: { title?: string; description?: string }) => {
+    if (!editingCard) return;
+    
+    // Очищаем предыдущий таймер
+    if (autoSaveTimeout) {
+      clearTimeout(autoSaveTimeout);
+    }
+    
+    // Устанавливаем новый таймер для автосохранения
+    const timeout = setTimeout(() => {
+      updateCardDetailsMutation.mutate({
+        cardId: editingCard.id,
+        title: data.title,
+        description: data.description
+      });
+    }, 1000); // Автосохранение через 1 секунду после последнего изменения
+    
+    setAutoSaveTimeout(timeout);
+  }, [editingCard, updateCardDetailsMutation, autoSaveTimeout]);
+  
+  // Обработчик закрытия модального окна с автосохранением
+  const handleCloseEditModal = useCallback(() => {
+    if (editingCard) {
+      const titleInput = document.querySelector<HTMLInputElement>('input[placeholder="Название задачи"]');
+      const descriptionTextarea = document.querySelector<HTMLTextAreaElement>('textarea[placeholder="Добавьте описание..."]');
+      
+      const currentTitle = titleInput?.value || editingCard.title;
+      const currentDescription = descriptionTextarea?.value || editingCard.description || "";
+      
+      if (currentTitle !== editingCard.title || currentDescription !== editingCard.description) {
+        // Сохраняем изменения перед закрытием
+        updateCardDetailsMutation.mutate({
+          cardId: editingCard.id,
+          title: currentTitle,
+          description: currentDescription
+        });
+      }
+    }
+    
+    // Очищаем таймер автосохранения
+    if (autoSaveTimeout) {
+      clearTimeout(autoSaveTimeout);
+      setAutoSaveTimeout(null);
+    }
+    
+    setEditingCard(null);
+    setShowTagAssignment(false);
+  }, [editingCard, updateCardDetailsMutation, autoSaveTimeout]);
+
   if (isLoading || !board) {
     return <div className="text-slate-400">Загружаем данные...</div>;
   }
@@ -549,167 +688,175 @@ export function BoardPage() {
 
       <Modal
         isOpen={editingCard !== null}
-        onClose={() => setEditingCard(null)}
+        onClose={handleCloseEditModal}
         title={isEditMode ? "Редактирование карточки" : "Просмотр карточки"}
         description={isEditMode ? "Измените поля карточки и теги" : "Название, описание и теги"}
       >
-        <form className="space-y-4" onSubmit={isEditMode ? handleSubmitEditCard(handleEditCard) : (e) => e.preventDefault()}>
+        <div className="space-y-4">
           {editingCard && (
-            <div className="space-y-4">
-              {/* Название */}
+            <>
+              {/* Название - крупное, без подписи */}
               <div>
-                <label className="text-sm text-slate-300">Название</label>
                 {isEditMode ? (
-                  <>
-                    <Input placeholder="Название задачи" autoFocus {...registerEditCard("title")} />
-                    {editCardErrors.title && <p className="text-xs text-danger">{editCardErrors.title.message}</p>}
-                  </>
-                ) : (
-                  <p className="mt-1 text-sm text-white">{editingCard.title}</p>
-                )}
-              </div>
-              {/* Описание */}
-              <div>
-                <label className="text-sm text-slate-300">Описание</label>
-                {isEditMode ? (
-                  <>
-                    <Textarea rows={4} placeholder="Детали" {...registerEditCard("description")} />
-                    {editCardErrors.description && <p className="text-xs text-danger">{editCardErrors.description.message}</p>}
-                  </>
-                ) : (
-                  <p className="mt-1 text-sm text-slate-300">{editingCard.description ?? "—"}</p>
-                )}
-              </div>
-
-              {/* Доступные теги доски для добавления/убирания к карточке */}
-              <div className="space-y-3">
-                <label className="text-sm text-slate-300">Теги</label>
-                <div className="flex flex-wrap gap-2">
-                  {boardTags?.map((t) => {
-                    const selected = editingCard.tags?.some((ct) => ct.tag.id === t.id);
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        className={`px-2 py-1 rounded-md border text-xs ${selected ? 'border-blue-400/40 text-blue-300' : 'border-white/10 text-slate-400'} hover:border-white/30`}
-                        style={{ borderColor: t.color, color: t.color }}
-                        onClick={() => {
-                          if (selected) {
-                            detachTagMutation.mutate({ cardId: editingCard.id, tagId: t.id });
-                          } else {
-                            attachTagMutation.mutate({ cardId: editingCard.id, tagId: t.id });
-                          }
-                        }}
-                      >
-                        {t.name}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Управление тегами карточки: drag-n-drop порядок, крестик для удаления, сердечко для избранного */}
-                <div className="space-y-2">
-                  <p className="text-xs uppercase text-slate-500 tracking-wider">Теги этой карточки (перетаскивайте для изменения порядка)</p>
-                  <DndContext
-                    onDragEnd={(e) => {
-                      const { active, over } = e;
-                      if (!active || !over) return;
-                      const activeId = String(active.id);
-                      const overId = String(over.id);
-                      if (activeId === overId) return;
-                      const oldIndex = tagOrder.indexOf(activeId);
-                      const newIndex = tagOrder.indexOf(overId);
-                      if (oldIndex === -1 || newIndex === -1) return;
-                      const next = arrayMove(tagOrder, oldIndex, newIndex);
-                      setTagOrder(next);
-                      reorderTagsMutation.mutate({ tagIds: next });
+                  <Input 
+                    placeholder="Название задачи" 
+                    autoFocus 
+                    {...registerEditCard("title")}
+                    onChange={(e) => {
+                      registerEditCard("title").onChange(e);
+                      autoSaveCard({ title: e.target.value });
                     }}
-                  >
-                    <SortableContext items={tagOrder} strategy={verticalListSortingStrategy}>
-                      <div className="flex flex-wrap gap-2">
-                        {(editingCard.tags ?? [])
-                          .slice()
-                          .sort((a, b) => a.position - b.position)
-                          .map((ct) => (
-                            <TagChip
-                              key={ct.tag.id}
-                              ct={ct}
-                              onDetach={(id) => {
-                                detachTagMutation.mutate({ cardId: editingCard.id, tagId: id }, {
-                                  onSuccess: (updated) => {
-                                    setEditingCard(updated);
-                                    setTagOrder((updated.tags ?? []).map((t) => t.tag.id));
-                                  }
-                                });
-                              }}
-                              onToggleFavorite={(id, makeFav) => {
-                                toggleFavoriteMutation.mutate({ cardId: editingCard.id, tagId: id, isFavorite: makeFav }, {
-                                  onSuccess: (updated) => {
-                                    setEditingCard(updated);
-                                    setTagOrder((updated.tags ?? []).map((t) => t.tag.id));
-                                  }
-                                });
-                              }}
-                            />
-                          ))}
-                      </div>
-                    </SortableContext>
-                  </DndContext>
-                </div>
-
-                {/* Создание нового тега (опционально) */}
-                <div className="flex items-center gap-2">
-                  <Input
-                    placeholder="Название нового тега"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const name = (e.target as HTMLInputElement).value.trim();
-                        if (!name) return;
-                        const color = '#8884d8';
-                        createTagMutation.mutate({ name, color });
-                        (e.target as HTMLInputElement).value = '';
-                      }
-                    }}
+                    className="text-xl font-semibold"
                   />
+                ) : (
+                  <h2 className="text-2xl font-bold text-white">{editingCard.title}</h2>
+                )}
+                {editCardErrors.title && <p className="text-xs text-danger">{editCardErrors.title.message}</p>}
+              </div>
+
+              {/* Описание - основной блок */}
+              <div>
+                {isEditMode ? (
+                  <Textarea 
+                    rows={6} 
+                    placeholder="Описание задачи..." 
+                    {...registerEditCard("description")}
+                    onChange={(e) => {
+                      registerEditCard("description").onChange(e);
+                      autoSaveCard({ description: e.target.value });
+                    }}
+                    className="text-base"
+                  />
+                ) : (
+                  <div className="bg-slate-800 p-4 rounded-lg">
+                    <p className="text-base text-slate-200 whitespace-pre-wrap">
+                      {editingCard.description || "Описание отсутствует"}
+                    </p>
+                  </div>
+                )}
+                {editCardErrors.description && <p className="text-xs text-danger">{editCardErrors.description.message}</p>}
+              </div>
+
+              {/* Теги внизу с кнопкой + */}
+              <div className="space-y-3 pt-4 border-t border-slate-600">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm text-slate-300">Теги</label>
                   <Button
                     type="button"
-                    variant="secondary"
-                    onClick={() => {
-                      const input = document.querySelector<HTMLInputElement>('input[placeholder="Название нового тега"]');
-                      const name = input?.value.trim();
-                      if (!name) return;
-                      const color = '#8884d8';
-                      createTagMutation.mutate({ name, color });
-                      if (input) input.value = '';
-                    }}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowTagAssignment(!showTagAssignment)}
+                    className="text-blue-400 hover:text-blue-300"
                   >
-                    Добавить тег
+                    <Plus className="w-4 h-4" />
                   </Button>
                 </div>
+
+                {/* Текущие теги карточки */}
+                <div className="flex flex-wrap gap-2">
+                  {(editingCard.tags ?? [])
+                    .slice()
+                    .sort((a, b) => a.position - b.position)
+                    .map((ct) => (
+                      <Badge
+                        key={ct.tag.id}
+                        variant="secondary"
+                        style={{ backgroundColor: ct.tag.color + '20', color: ct.tag.color, borderColor: ct.tag.color }}
+                        className="text-sm"
+                      >
+                        {ct.tag.name}
+                      </Badge>
+                    ))}
+                </div>
+
+                {/* UI для назначения тегов */}
+                {showTagAssignment && (
+                  <div className="space-y-3 p-3 bg-slate-800 rounded-lg">
+                    <p className="text-xs text-slate-400">Доступные теги:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {boardTags?.map((t) => {
+                        const selected = editingCard.tags?.some((ct) => ct.tag.id === t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            className={`px-3 py-1 rounded-md border text-sm transition-colors ${
+                              selected 
+                                ? 'border-blue-400/40 bg-blue-400/10 text-blue-300' 
+                                : 'border-white/10 text-slate-400 hover:border-white/30'
+                            }`}
+                            style={{ 
+                              borderColor: selected ? t.color : undefined,
+                              color: selected ? t.color : undefined 
+                            }}
+                            onClick={() => {
+                              if (selected) {
+                                detachTagMutation.mutate({ cardId: editingCard.id, tagId: t.id });
+                              } else {
+                                attachTagMutation.mutate({ cardId: editingCard.id, tagId: t.id });
+                              }
+                            }}
+                          >
+                            {t.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Создание нового тега */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-600">
+                      <Input
+                        placeholder="Название нового тега"
+                        className="flex-1"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const name = (e.target as HTMLInputElement).value.trim();
+                            if (!name) return;
+                            const color = '#8884d8';
+                            createTagMutation.mutate({ name, color });
+                            (e.target as HTMLInputElement).value = '';
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          const input = document.querySelector<HTMLInputElement>('input[placeholder="Название нового тега"]');
+                          const name = input?.value.trim();
+                          if (!name) return;
+                          const color = '#8884d8';
+                          createTagMutation.mutate({ name, color });
+                          if (input) input.value = '';
+                        }}
+                      >
+                        Создать тег
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
+            </>
           )}
-          <div className="flex justify-end gap-3">
-            <Button variant="ghost" type="button" onClick={() => setEditingCard(null)}>
+
+          {/* Кнопки управления */}
+          <div className="flex justify-end gap-3 pt-4">
+            <Button variant="ghost" type="button" onClick={handleCloseEditModal}>
               Закрыть
             </Button>
-            {isEditMode ? (
-              <Button type="submit" loading={updateCardDetailsMutation.isPending}>
-                Сохранить
-              </Button>
-            ) : (
-              <Button type="button" variant="secondary" onClick={() => {
-                setIsEditMode(true);
-                if (editingCard) {
-                  resetEditCard({ title: editingCard.title, description: editingCard.description ?? undefined });
-                }
-              }}>
+            {!isEditMode && (
+              <Button 
+                type="button" 
+                variant="secondary" 
+                onClick={() => setIsEditMode(true)}
+              >
                 Редактировать
               </Button>
             )}
           </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

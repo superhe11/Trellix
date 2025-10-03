@@ -45,4 +45,3 @@ export async function createTag(user: Express.UserPayload, boardId: string, payl
     throw err;
   }
 }
-

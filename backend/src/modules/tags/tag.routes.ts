@@ -19,4 +19,3 @@ tagRouter.post(
   validate({ params: boardIdParamsSchema, body: createTagSchema }),
   createTagHandler
 );
-

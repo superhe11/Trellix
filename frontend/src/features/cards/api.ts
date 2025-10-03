@@ -41,8 +41,15 @@ export async function getCard(cardId: string) {
 }
 
 export async function attachTag(cardId: string, tagId: string) {
-  const response = await apiClient.post<{ card: Card }>(`/cards/${cardId}/tags`, { tagId });
-  return response.data.card;
+  console.log(`[Frontend attachTag] Starting - cardId: ${cardId}, tagId: ${tagId}`);
+  try {
+    const response = await apiClient.post<{ card: Card }>(`/cards/${cardId}/tags`, { tagId });
+    console.log(`[Frontend attachTag] Success - response:`, response.data);
+    return response.data.card;
+  } catch (error) {
+    console.error(`[Frontend attachTag] Error:`, error);
+    throw error;
+  }
 }
 
 export async function detachTag(cardId: string, tagId: string) {
